@@ -1,0 +1,145 @@
+<!doctype html><html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Schafkopf">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0f1c15">
+<link rel="manifest" href="manifest.json"><link rel="apple-touch-icon" href="icon.png">
+<title>Schafkopf</title>
+<style>
+:root{--bg:#0f1c15;--card:#18291f;--line:#274034;--tx:#eef3ee;--mu:#93a99a;--ac:#2f7d52;--win:#4fcf82;--loss:#ff6b66}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--tx);font:17px/1.4 -apple-system,system-ui,sans-serif}
+#app{padding:calc(env(safe-area-inset-top) + 14px) 14px calc(90px + env(safe-area-inset-bottom))}
+.band{height:12px;margin:-14px -14px 12px;background:linear-gradient(45deg,#5aa0d8 25%,transparent 25%,transparent 75%,#5aa0d8 75%),linear-gradient(45deg,#5aa0d8 25%,#fff 25%,#fff 75%,#5aa0d8 75%);background-size:12px 12px;background-position:0 0,6px 6px}
+h2{font-size:24px;margin:.2em 0 .6em}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin:0 0 10px}
+button{font:inherit;color:var(--tx);background:var(--card);border:1px solid var(--line);border-radius:12px;min-height:48px;padding:0 14px}
+button.p{background:var(--ac);border-color:var(--ac);font-weight:600;width:100%;margin-top:8px}
+button.d{background:#6b2727;border-color:#6b2727;width:100%;margin-top:8px}
+.seg{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 10px}.seg button{flex:1;min-width:70px}
+.seg button.on{background:var(--ac);border-color:var(--ac);font-weight:600}
+input,select{font:inherit;color:var(--tx);background:#0c1611;border:1px solid var(--line);border-radius:12px;min-height:48px;padding:0 12px;width:100%}
+label{display:block;color:var(--mu);font-size:14px;margin-top:8px}
+.w{color:var(--win)}.l{color:var(--loss)}.mu{color:var(--mu);font-size:14px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:7px 3px;text-align:right}td:first-child,th:first-child{text-align:left}
+.warn{background:#4a2a14;color:#ffd2a8;padding:10px;border-radius:12px;margin:8px 0}
+.lg span{margin-right:12px;font-size:13px}
+nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:#0b140f;border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
+nav button{flex:1;border:0;border-radius:0;background:none;font-size:10.5px;min-height:56px;padding:0 2px;color:var(--mu)}
+nav button.on{color:var(--win)}nav i{font-style:normal;font-size:20px;display:block}
+</style></head><body>
+<div id="app"></div>
+<nav>
+<button data-t=list onclick="go('list')"><i>🃏</i>Abende</button>
+<button data-t=new onclick="go('new')"><i>➕</i>Neuer Abend</button>
+<button data-t=stat onclick="go('stat')"><i>📊</i>Statistik</button>
+<button data-t=pl onclick="go('pl')"><i>👥</i>Spieler</button>
+<button data-t=set onclick="go('set')"><i>⚙️</i>Einstellungen</button>
+</nav>
+<script>
+let DB={players:[],evenings:[],settings:{tarif:{sau:.1,solo:.2,ramsch:.1}}},tab='list',evId=null,nf=null,gf=null,post=[],sf={from:'',to:'',pids:[],place:''};
+const SPIELE=['Sauspiel','Wenz','Solo','Geier','Ramsch'],COL=['#4fcf82','#5aa0d8','#f2b84b','#e57ab0','#a98bf0','#ff8a5b'];
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+const r2=n=>Math.round(n*100)/100,fm=n=>n.toFixed(2).replace('.',',')+' €',eur=n=>(n>.004?'+':'')+fm(Math.abs(n)<.005?0:n);
+const cls=n=>n>.004?'w':n<-.004?'l':'',pn=id=>(DB.players.find(p=>p.id==id)||{name:'?'}).name;
+const esc=s=>String(s).replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';'),pc=(a,b)=>b?Math.round(a/b*100)+' %':'–';
+const fd=d=>new Date(d+'T12:00').toLocaleDateString('de-DE',{weekday:'short',day:'2-digit',month:'2-digit',year:'numeric'});
+const today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10);
+const cur=()=>DB.evenings.find(e=>e.id==evId),places=()=>[...new Set(DB.evenings.map(e=>e.place).filter(Boolean))];
+// ---------- IndexedDB ----------
+const idb=()=>new Promise((r,j)=>{const q=indexedDB.open('schafkopf',1);q.onupgradeneeded=()=>q.result.createObjectStore('kv');q.onsuccess=()=>r(q.result);q.onerror=()=>j(q.error)});
+async function load(){try{const d=await idb();await new Promise(r=>{const q=d.transaction('kv').objectStore('kv').get('db');q.onsuccess=()=>{if(q.result)DB=q.result;r()};q.onerror=()=>r()})}catch(e){}}
+async function save(){try{const d=await idb();d.transaction('kv','readwrite').objectStore('kv').put(JSON.parse(JSON.stringify(DB)),'db')}catch(e){alert('Speichern fehlgeschlagen')}}
+// ---------- Berechnung ----------
+function gval(g,ev){const t=ev.tarif,b=g.art=='Sauspiel'?t.sau:g.art=='Ramsch'?t.ramsch:t.solo;let v=g.art=='Ramsch'?b:b*(1+(g.sn||0)+(+g.lauf||0));if(g.art!='Ramsch'){if(g.kontra)v*=2;if(g.re)v*=2}return v}
+function calc(g,ev){const v=gval(g,ev),s=g.won?1:-1,res={};ev.pids.forEach(p=>res[p]=0);const act=ev.pids.filter(p=>p!=g.aus);
+ if(g.art=='Sauspiel'){res[g.sp]+=s*v;res[g.mit]+=s*v;act.filter(p=>p!=g.sp&&p!=g.mit).forEach(p=>res[p]-=s*v)}
+ else{const o=act.filter(p=>p!=g.sp);res[g.sp]+=s*v*o.length;o.forEach(p=>res[p]-=s*v)}return res}
+function results(ev){const r={};ev.pids.forEach(p=>r[p]=ev.mode=='simple'?+ev.result[p]||0:0);
+ if(ev.mode!='simple')ev.games.forEach(g=>{const c=calc(g,ev);for(const p in c)r[p]=r2(r[p]+c[p])});return r}
+const gvalid=(ev,g)=>{const s=g.art=='Sauspiel',a=ev.pids.length==5;return g.sp&&(!s||(g.mit&&g.mit!=g.sp))&&(!a||(g.aus&&g.aus!=g.sp&&!(s&&g.aus==g.mit)))};
+// ---------- Charts (eigenes Canvas, offline ohne Bibliothek) ----------
+function cv(w,h){const c=document.createElement('canvas'),d=devicePixelRatio||1;c.width=w*d;c.height=h*d;c.style.cssText='width:100%;height:auto;aspect-ratio:'+w+'/'+h;const x=c.getContext('2d');x.scale(d,d);return[c,x]}
+function frame(W,H,all){const[c,x]=cv(W,H);let mn=Math.min(0,...all),mx=Math.max(0,...all);if(mx==mn)mx=mn+1;const L=40,R=8,T=10,B=10,Y=v=>T+(mx-v)*(H-T-B)/(mx-mn);x.font='10px sans-serif';x.lineWidth=1;
+ for(let i=0;i<=4;i++){const v=mn+(mx-mn)*i/4,y=Y(v);x.strokeStyle='#274034';x.beginPath();x.moveTo(L,y);x.lineTo(W-R,y);x.stroke();x.fillStyle='#93a99a';x.fillText(v.toFixed(1),2,y+3)}
+ x.strokeStyle='#93a99a';x.beginPath();x.moveTo(L,Y(0));x.lineTo(W-R,Y(0));x.stroke();return{c,x,Y,L,R,W}}
+function line(S){const n=Math.max(...S.map(s=>s.d.length)),f=frame(340,220,S.flatMap(s=>s.d)),{x,Y,L,R,W}=f,X=i=>L+i*(W-L-R)/Math.max(1,n-1);
+ S.forEach((s,k)=>{x.strokeStyle=x.fillStyle=COL[k%6];x.lineWidth=2;x.beginPath();s.d.forEach((v,i)=>i?x.lineTo(X(i),Y(v)):x.moveTo(X(i),Y(v)));x.stroke();s.d.forEach((v,i)=>{x.beginPath();x.arc(X(i),Y(v),2.5,0,7);x.fill()})});return f.c}
+function bars(S){const n=S[0].d.length,k=S.length,f=frame(340,200,S.flatMap(s=>s.d)),{x,Y,L,R,W}=f,gw=(W-L-R)/n,bw=Math.max(2,Math.min(20,gw*.8/k));
+ S.forEach((s,j)=>s.d.forEach((v,i)=>{x.fillStyle=k>1?COL[j%6]:v>=0?'#4fcf82':'#ff6b66';x.fillRect(L+gw*i+gw/2-bw*k/2+bw*j,Math.min(Y(v),Y(0)),Math.max(1,bw-1),Math.abs(Y(v)-Y(0)))}));return f.c}
+function pie(I){const[c,x]=cv(340,Math.max(170,I.length*24+30)),t=I.reduce((a,b)=>a+b[1],0);let a=-Math.PI/2;
+ I.forEach(([n,v],i)=>{const e=a+v/t*2*Math.PI;x.fillStyle=COL[i%6];x.beginPath();x.moveTo(85,85);x.arc(85,85,78,a,e);x.fill();a=e;x.fillRect(180,18+i*24,12,12);x.fillStyle='#eef3ee';x.font='13px sans-serif';x.fillText(n+' '+v+' ('+Math.round(v/t*100)+'%)',198,29+i*24)});return c}
+const mount=(id,c)=>{const d=document.getElementById(id);if(d)d.appendChild(c)};
+const legend=P=>`<div class=lg>${P.map((p,i)=>`<span style="color:${COL[i%6]}">● ${esc(pn(p))}</span>`).join('')}</div>`;
+// ---------- UI-Helfer ----------
+const seg=(fn,key,opts,c)=>`<div class=seg>${opts.map(([v,t])=>`<button class="${v===c?'on':''}" onclick='${fn}(${JSON.stringify(key)},${JSON.stringify(v)})'>${esc(t)}</button>`).join('')}</div>`;
+const tin=(t,fn)=>[['sau','Sauspiel (€)'],['solo','Solo / Wenz / Geier (€)'],['ramsch','Ramsch (€)']].map(([k,l])=>`<label>${l}</label><input type=number step=.01 value="${t[k]}" onchange="${fn}('${k}',this.value)">`).join('');
+const go=t=>{tab=t;evId=null;render();scrollTo(0,0)},nset=(k,v)=>{nf[k]=v;render()},gset=(k,v)=>{gf[k]=v;render()};
+const nT=(k,v)=>nf.tarif[k]=+v,sT=(k,v)=>{DB.settings.tarif[k]=+v;save()},edT=(k,v)=>{cur().tarif[k]=+v;save();render()};
+const edEv=(k,v)=>{cur()[k]=v;save();render()},openEv=id=>{evId=id;gf=null;tab='list';render();scrollTo(0,0)};
+const setRes=(p,v)=>{cur().result[p]=+v;save();render()};
+function render(){document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.t==tab));
+ $('#app').innerHTML='<div class=band></div>'+(tab=='list'&&evId?vEv():{list:vList,new:vNew,stat:vStat,pl:vPl,set:vSet}[tab]());post.forEach(f=>f());post=[]}
+const $=s=>document.querySelector(s);
+// ---------- Abende ----------
+function vList(){const E=DB.evenings.slice().sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:0);
+ return '<h2>Abende</h2>'+(E.length?E.map(e=>{const r=results(e);return `<div class=card onclick="openEv('${e.id}')"><div class=row><b>${fd(e.date)}</b><span class=mu>${e.mode=='simple'?'Endstand':e.games.length+' Spiele'}</span></div>${e.place?`<div class=mu>${esc(e.place)}</div>`:''}<div class=row style="margin-top:6px;justify-content:flex-start;gap:14px">${[...e.pids].sort((a,b)=>r[b]-r[a]).map(p=>`<span>${esc(pn(p))} <b class="${cls(r[p])}">${eur(r[p])}</b></span>`).join('')}</div></div>`}).join(''):'<div class=card>Noch keine Abende. Starte unter „Neuer Abend“.</div>')}
+function vEv(){const ev=cur();if(!ev){evId=null;return vList()}
+ const r=results(ev),sum=r2(Object.values(r).reduce((a,b)=>a+b,0)),det=ev.mode=='detailed',P=ev.pids;
+ if(!gf)gf={sp:P[0],mit:P[1],aus:P.length==5?P[4]:'',art:'Sauspiel',won:1,sn:0,lauf:0,kontra:0,re:0};
+ let h=`<button onclick="evId=null;render()">‹ Zurück</button><h2>${fd(ev.date)}</h2><div class=card><label>Datum</label><input type=date value="${ev.date}" onchange="edEv('date',this.value)"><label>Ort</label><input value="${esc(ev.place||'')}" onchange="edEv('place',this.value)">${det?`<details><summary class=mu style="margin-top:12px">Tarif ändern</summary>${tin(ev.tarif,'edT')}</details>`:''}</div>`;
+ h+=`<div class=card><b>Ergebnis</b>${(det?[...P].sort((a,b)=>r[b]-r[a]):P).map(p=>`<div class=row style="min-height:${det?38:56}px;flex-wrap:nowrap"><span>${esc(pn(p))}</span>${det?`<b class="${cls(r[p])}">${eur(r[p])}</b>`:`<input type=number step=.01 style="width:130px;text-align:right" placeholder="± €" value="${ev.result[p]??''}" onchange="setRes('${p}',this.value)">`}</div>`).join('')}${!det&&Math.abs(sum)>.004?`<div class=warn>Achtung: Die Summe ist ${eur(sum)}, sie muss 0 ergeben.</div>`:''}</div>`;
+ if(det){const R=gf.art=='Ramsch',pl=P.map(p=>[p,pn(p)]);
+  h+=`<div class=card><b>Neues Spiel</b><label>Spielart</label>${seg('gset','art',SPIELE.map(a=>[a,a]),gf.art)}<label>${R?'Verlierer':'Spieler'}</label>${seg('gset','sp',pl,gf.sp)}${gf.art=='Sauspiel'?`<label>Mitspieler</label>${seg('gset','mit',pl,gf.mit)}`:''}${P.length==5?`<label>Aussetzer</label>${seg('gset','aus',pl,gf.aus)}`:''}${R?'':`<label>Ausgang</label>${seg('gset','won',[[1,'Gewonnen'],[0,'Verloren']],gf.won)}<label>Schneider / Schwarz</label>${seg('gset','sn',[[0,'Normal'],[1,'Schneider'],[2,'Schwarz']],gf.sn)}<label>Laufende</label><div class=row style="flex-wrap:nowrap"><button onclick="gset('lauf',Math.max(0,gf.lauf-1))">−</button><b style="font-size:24px">${gf.lauf}</b><button onclick="gset('lauf',gf.lauf+1)">+</button></div><label>Verdoppeln</label>${seg('gset','kontra',[[0,'Kein Kontra'],[1,'Kontra']],gf.kontra)}${seg('gset','re',[[0,'Kein Re'],[1,'Re']],gf.re)}`}<div class=mu>Spielwert: ${fm(gval(gf,ev))} pro Gegner${R?' (Ramsch: Verlierer zahlt jedem)':''}</div><button class=p onclick="addG()">Spiel speichern</button></div>`;
+  if(ev.games.length){h+=`<div class=card><b>Verlauf</b><div id=c1></div>${legend(P)}</div><div class=card><b>Spiele (${ev.games.length})</b>${ev.games.map((g,i)=>`<div class=row style="border-top:1px solid var(--line);padding:8px 0;flex-wrap:nowrap"><span>${i+1}. ${g.art}: ${esc(pn(g.sp))}${g.mit?' + '+esc(pn(g.mit)):''}<br><span class=mu>${g.art=='Ramsch'?'':(g.won?'gewonnen':'verloren')}${['',', Schneider',', Schwarz'][g.sn]||''}${g.lauf?', '+g.lauf+' Laufende':''}${g.kontra?', Kontra':''}${g.re?', Re':''} (${fm(gval(g,ev))})</span></span><button onclick="delG(${i})">✕</button></div>`).reverse().join('')}</div>`;
+   post.push(()=>mount('c1',line(P.map(p=>{let c=0;return{d:[0,...ev.games.map(g=>(c=r2(c+calc(g,ev)[p]),c))]}}))))}}
+ return h+`<button class=d onclick="delEv()">Abend löschen</button>`}
+function addG(){const ev=cur(),g={...gf};if(!gvalid(ev,g))return alert('Spieler, Mitspieler und Aussetzer müssen verschieden sein.');if(g.art=='Ramsch')g.won=0;if(g.art!='Sauspiel')g.mit='';g.lauf=+g.lauf;ev.games.push(g);gf.lauf=0;gf.sn=0;gf.kontra=0;gf.re=0;save();render()}
+function delG(i){if(confirm('Spiel löschen?')){cur().games.splice(i,1);save();render()}}
+function delEv(){if(confirm('Diesen Abend endgültig löschen?')){DB.evenings=DB.evenings.filter(e=>e.id!=evId);evId=null;save();render()}}
+// ---------- Neuer Abend ----------
+function vNew(){const A=DB.players.filter(p=>!p.arch);if(A.length<4)return `<h2>Neuer Abend</h2><div class=card>Lege zuerst mindestens 4 Spieler an.</div><button class=p onclick="go('pl')">Zu den Spielern</button>`;
+ nf=nf||{date:today(),place:'',mode:'simple',pids:[],tarif:{...DB.settings.tarif}};
+ return `<h2>Neuer Abend</h2><label>Datum</label><input type=date value="${nf.date}" onchange="nf.date=this.value"><label>Ort (optional)</label><input value="${esc(nf.place)}" list=orte onchange="nf.place=this.value"><datalist id=orte>${places().map(o=>`<option>${esc(o)}</option>`).join('')}</datalist>
+ <label>Teilnehmer (4 oder 5)</label><div class=seg>${A.map(p=>`<button class="${nf.pids.includes(p.id)?'on':''}" onclick="tp('${p.id}')">${esc(p.name)}</button>`).join('')}</div>
+ <label>Erfassung</label>${seg('nset','mode',[['simple','Einfach: Endstand'],['detailed','Detailliert: Spiele']],nf.mode)}
+ <b>Tarif</b>${tin(nf.tarif,'nT')}<button class=p onclick="startEv()">Abend starten</button>`}
+function tp(id){const i=nf.pids.indexOf(id);if(i>=0)nf.pids.splice(i,1);else if(nf.pids.length<5)nf.pids.push(id);render()}
+function startEv(){if(![4,5].includes(nf.pids.length))return alert('Bitte 4 oder 5 Spieler wählen.');const e={id:uid(),date:nf.date,place:nf.place.trim(),mode:nf.mode,pids:[...nf.pids],tarif:{...nf.tarif},result:{},games:[]};DB.evenings.push(e);save();nf=null;openEv(e.id)}
+// ---------- Statistik ----------
+const sset=(k,v)=>{sf[k]=v;render()},sp=id=>{const i=sf.pids.indexOf(id);i>=0?sf.pids.splice(i,1):sf.pids.push(id);render()};
+function vStat(){const evs=DB.evenings.filter(e=>(!sf.from||e.date>=sf.from)&&(!sf.to||e.date<=sf.to)&&(!sf.place||e.place==sf.place)).sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:a.id<b.id?-1:1);
+ const all=[...new Set(DB.evenings.flatMap(e=>e.pids))],pids=[...new Set(evs.flatMap(e=>e.pids))].filter(p=>!sf.pids.length||sf.pids.includes(p)),R=evs.map(results);
+ let h=`<h2>Statistik</h2><div class=card><div class=row style="flex-wrap:nowrap;gap:8px"><div><label>Von</label><input type=date value="${sf.from}" onchange="sset('from',this.value)"></div><div><label>Bis</label><input type=date value="${sf.to}" onchange="sset('to',this.value)"></div></div><label>Ort</label><select onchange="sset('place',this.value)"><option value="">Alle Orte</option>${places().map(o=>`<option ${o==sf.place?'selected':''} value="${esc(o)}">${esc(o)}</option>`).join('')}</select><label>Spieler (leer = alle)</label><div class=seg>${all.map(p=>`<button class="${sf.pids.includes(p)?'on':''}" onclick="sp('${p}')">${esc(pn(p))}</button>`).join('')}</div></div>`;
+ if(!evs.length||!pids.length)return h+'<div class=card>Keine Abende im gewählten Filter.</div>';
+ const S=pids.map(p=>{const v=[];evs.forEach((e,i)=>{if(e.pids.includes(p))v.push(R[i][p])});const n=v.length,tot=r2(v.reduce((a,b)=>a+b,0)),sg=Math.sign(v[n-1]);let k=0;for(let i=n-1;i>=0&&sg&&Math.sign(v[i])==sg;i--)k++;return{p,n,tot,avg:tot/n,win:v.filter(x=>x>0).length/n,best:Math.max(...v),worst:Math.min(...v),k:sg*k}}).sort((a,b)=>b.tot-a.tot);
+ const G={},AC={};pids.forEach(p=>G[p]={tot:0,sp:0,art:{}});
+ evs.filter(e=>e.mode=='detailed').forEach(e=>e.games.forEach(g=>{AC[g.art]=(AC[g.art]||0)+1;e.pids.forEach(p=>{if(G[p]&&p!=g.aus)G[p].tot++});const q=G[g.sp];if(q){q.sp++;const a=q.art[g.art]=q.art[g.art]||[0,0];a[0]++;a[1]+=g.won?1:0}}));
+ const ser=k=>k?Math.abs(k)+(k>0?' Siege':' Verluste'):'–';
+ h+=`<div class=card><b>Ranking</b> <span class=mu>(${evs.length} Abende)</span><table><tr class=mu><th>Spieler</th><th>Summe</th><th>Ø Abend</th><th>Abende</th></tr>${S.map((s,i)=>`<tr><td>${i+1}. ${esc(pn(s.p))}</td><td class="${cls(s.tot)}"><b>${eur(s.tot)}</b></td><td class="${cls(s.avg)}">${eur(s.avg)}</td><td>${s.n}</td></tr>`).join('')}</table></div>
+ <div class=card><b>Kennzahlen</b><table><tr class=mu><th>Spieler</th><th>Siegquote</th><th>Bester</th><th>Schlechtester</th><th>Serie</th></tr>${S.map(s=>`<tr><td>${esc(pn(s.p))}</td><td>${Math.round(s.win*100)} %</td><td class=w>${eur(s.best)}</td><td class=l>${eur(s.worst)}</td><td class="${cls(s.k)}">${ser(s.k)}</td></tr>`).join('')}</table></div>
+ <div class=card><b>Kumulierte Bilanz</b><div id=c1></div>${legend(pids)}</div><div class=card><b>Ergebnis pro Abend</b><div id=c2></div>${legend(pids)}</div>`;
+ if(Object.keys(AC).length){h+=`<div class=card><b>Verteilung der Spielarten</b><div id=c3></div></div>`+S.filter(s=>G[s.p].tot).map(s=>{const g=G[s.p],so=['Solo','Wenz','Geier'].reduce((a,k)=>{const x=g.art[k]||[0,0];return[a[0]+x[0],a[1]+x[1]]},[0,0]);return `<div class=card><b>${esc(pn(s.p))}</b><div class=mu>Spielquote ${pc(g.sp,g.tot)} (${g.sp} von ${g.tot} Spielen)</div><table>${Object.entries(g.art).map(([k,[n,w]])=>`<tr><td>${k}</td><td>${n}×</td><td>${pc(w,n)} gewonnen</td></tr>`).join('')}</table><div class=mu>Solo-Statistik (Solo, Wenz, Geier): ${so[0]}× gespielt, ${so[1]} gewonnen</div></div>`}).join('')}
+ post.push(()=>{mount('c1',line(pids.map(p=>{let c=0;return{d:[0,...evs.map((e,i)=>(e.pids.includes(p)&&(c=r2(c+R[i][p])),c))]}})));mount('c2',bars(pids.map(p=>({d:evs.map((e,i)=>R[i][p]||0)}))));if(Object.keys(AC).length)mount('c3',pie(Object.entries(AC)))});
+ return h}
+// ---------- Spieler ----------
+function vPl(){const row=p=>`<div class="card row" style="flex-wrap:nowrap;${p.arch?'opacity:.55':''}"><b>${esc(p.name)}</b><span><button onclick="ren('${p.id}')">Ändern</button> <button onclick="arch('${p.id}')">${p.arch?'Reaktivieren':'Archivieren'}</button></span></div>`;
+ return `<h2>Spieler</h2><div class=card><input id=np placeholder="Name"><button class=p onclick="addP()">Spieler anlegen</button></div>${DB.players.filter(p=>!p.arch).map(row).join('')}${DB.players.some(p=>p.arch)?'<div class=mu>Archiviert</div>'+DB.players.filter(p=>p.arch).map(row).join(''):''}`}
+function addP(){const n=$('#np').value.trim();if(!n)return;DB.players.push({id:uid(),name:n});save();render()}
+function ren(id){const p=DB.players.find(p=>p.id==id),n=prompt('Neuer Name',p.name);if(n&&n.trim()){p.name=n.trim();save();render()}}
+function arch(id){const p=DB.players.find(p=>p.id==id);p.arch=!p.arch;save();render()}
+// ---------- Einstellungen / Backup ----------
+function dl(name,txt,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([txt],{type}));a.download=name;document.body.appendChild(a);a.click();a.remove()}
+function csv(kind){const q=s=>'"'+String(s).replace(/"/g,'""')+'"';let o=[];
+ if(kind=='r'){o.push('Datum;Ort;Modus;Spieler;Ergebnis_EUR');DB.evenings.forEach(e=>{const r=results(e);e.pids.forEach(p=>o.push([e.date,q(e.place||''),e.mode,q(pn(p)),String(r[p]).replace('.',',')].join(';')))})}
+ else{o.push('Datum;Ort;Nr;Spielart;Spieler;Mitspieler;Gewonnen;Schneider_Schwarz;Laufende;Kontra;Re;Wert_EUR');DB.evenings.filter(e=>e.mode=='detailed').forEach(e=>e.games.forEach((g,i)=>o.push([e.date,q(e.place||''),i+1,g.art,q(pn(g.sp)),q(g.mit?pn(g.mit):''),g.won?1:0,['','Schneider','Schwarz'][g.sn],g.lauf,g.kontra,g.re,String(gval(g,e)).replace('.',',')].join(';'))))}
+ dl(kind=='r'?'schafkopf-abende.csv':'schafkopf-spiele.csv','\ufeff'+o.join('\n'),'text/csv')}
+function imp(inp){const f=inp.files[0];if(!f)return;f.text().then(t=>{try{const d=JSON.parse(t);if(!Array.isArray(d.players)||!Array.isArray(d.evenings))throw 0;if(!confirm('Alle aktuellen Daten durch dieses Backup ersetzen?'))return;d.settings=d.settings||{tarif:{sau:.1,solo:.2,ramsch:.1}};DB=d;save();alert('Import erfolgreich');render()}catch(e){alert('Datei ungültig.')}})}
+function vSet(){return `<h2>Einstellungen</h2><div class=card><b>Standard-Tarif</b>${tin(DB.settings.tarif,'sT')}<div class=mu style="margin-top:8px">Wirkt auf neue Abende. Laufende, Schneider und Schwarz zählen je einmal den Grundtarif, Kontra und Re verdoppeln.</div></div>
+ <div class=card><b>Backup</b><div class=mu>iOS kann Browserdaten löschen. Exportiere regelmäßig und lege die Datei in iCloud Drive.</div><button class=p onclick="dl('schafkopf-backup-'+today()+'.json',JSON.stringify(DB),'application/json')">JSON-Backup exportieren</button><button class=p onclick="csv('r')">CSV: Abendergebnisse</button><button class=p onclick="csv('g')">CSV: einzelne Spiele</button><label>JSON-Backup importieren</label><input type=file accept=".json,application/json" onchange="imp(this)"></div>
+ <div class=card><b>${DB.players.length}</b> Spieler, <b>${DB.evenings.length}</b> Abende gespeichert</div>`}
+load().then(()=>{render();navigator.storage&&navigator.storage.persist&&navigator.storage.persist()});
+if('serviceWorker'in navigator)navigator.serviceWorker.register('service-worker.js').catch(()=>{});
+</script></body></html>
